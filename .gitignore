@@ -1,0 +1,45 @@
+# Composer
+vendor/
+composer.lock
+
+# PHPUnit
+.phpunit.cache/
+.phpunit.result.cache
+phpunit.xml.dist
+coverage/
+tests/coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+error_log
+
+# Docker volumes
+docker-compose.override.yml
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
