@@ -1,0 +1,56 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        tools: phpcs, phpstan, psalm
+
+    - name: Cache Composer packages
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+
+    - name: Run PHP CodeSniffer
+      run: phpcs --standard=PSR12 index.php tests/ || true
+
+    - name: Run PHPStan
+      run: phpstan analyse index.php tests/ --level=5 || true
+
+    - name: Check for merge conflicts
+      run: |
+        if grep -rn "^<<<<<<< " .; then
+          echo "Merge conflicts detected!"
+          exit 1
+        fi
+
+  size-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Check Docker image size
+      run: |
+        docker build -t test-image .
+        SIZE=$(docker image inspect test-image --format='{{.Size}}')
+        SIZE_MB=$((SIZE / 1000000))
+        echo "Docker image size: ${SIZE_MB}MB"
+        if [ $SIZE_MB -gt 500 ]; then
+          echo "Warning: Docker image is larger than 500MB"
+        fi
