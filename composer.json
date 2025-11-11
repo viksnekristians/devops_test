@@ -1,6 +1,7 @@
 {
     "name": "hello-world/php-app",
     "description": "A simple dockerized PHP Hello World application",
+    "license": "MIT",
     "require-dev": {
         "phpunit/phpunit": "^9.5"
     },
