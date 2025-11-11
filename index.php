@@ -1,6 +1,6 @@
 <?php
 function getGreeting() {
-    return "Hello World!!";
+    return "Hello World!";
 }
 
 $greeting = getGreeting();
