@@ -37,7 +37,7 @@ jobs:
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
           echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
         else
-          echo "tag=main-${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+          echo "tag=sha-${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
         fi
 
     - name: Log in to GitHub Container Registry
