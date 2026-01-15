@@ -100,13 +100,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare safe tag
+        id: safe-tag
+        run: |
+          BRANCH="${{ needs.assign-port.outputs.branch_name }}"
+          SAFE_TAG=$(echo "staging-${BRANCH}" | sed 's/\//-/g')
+          echo "tag=${SAFE_TAG}" >> $GITHUB_OUTPUT
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=staging-${{ needs.assign-port.outputs.branch_name }}
+            type=raw,value=${{ steps.safe-tag.outputs.tag }}
             type=sha,format=long,prefix=staging-
 
       - name: Build and push Docker image
@@ -147,12 +154,15 @@ jobs:
 
             CONTAINER_NAME="${{ needs.assign-port.outputs.container_name }}"
             PORT="${{ needs.assign-port.outputs.port }}"
-            IMAGE_TAG="staging-${{ needs.assign-port.outputs.branch_name }}"
+            BRANCH_NAME="${{ needs.assign-port.outputs.branch_name }}"
+            # Sanitize branch name for Docker tag (replace / with -)
+            SAFE_TAG=$(echo "staging-${BRANCH_NAME}" | sed 's/\//-/g')
 
             echo "🚀 Deploying ${CONTAINER_NAME} on port ${PORT}"
+            echo "📦 Using image tag: ${SAFE_TAG}"
 
             # Pull the new image
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_TAG}
 
             # Stop and remove existing container if it exists
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -182,7 +192,7 @@ jobs:
               --label "branch=${{ needs.assign-port.outputs.branch_name }}" \
               --label "port=${PORT}" \
               --label "deployed=$(date -Iseconds)" \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_TAG}
 
             # Wait for health check
             echo "⏳ Waiting for container to be healthy..."
