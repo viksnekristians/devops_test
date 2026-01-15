@@ -129,7 +129,6 @@ jobs:
     if: needs.assign-port.outputs.skip != 'true'
     environment:
       name: staging-${{ needs.assign-port.outputs.branch_name }}
-      url: http://${{ secrets.DEPLOY_HOST }}:${{ needs.assign-port.outputs.port }}
     permissions:
       contents: read
       packages: read

@@ -100,7 +100,6 @@ jobs:
     needs: [validate-and-prepare, test-staging]
     environment:
       name: production
-      url: http://${{ secrets.DEPLOY_HOST }}:8080
     permissions:
       contents: read
       packages: write
