@@ -1,0 +1,265 @@
+name: Deploy to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        type: string
+        default: 'develop'
+  push:
+    branches:
+      - develop
+      - 'feature/**'
+      - 'hotfix/**'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+      - develop
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  assign-port:
+    runs-on: ubuntu-latest
+    outputs:
+      port: ${{ steps.assign.outputs.port }}
+      branch_name: ${{ steps.assign.outputs.branch_name }}
+      container_name: ${{ steps.assign.outputs.container_name }}
+    steps:
+      - name: Determine branch name
+        id: branch
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BRANCH="${{ github.head_ref }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
+          fi
+          echo "name=${BRANCH}" >> $GITHUB_OUTPUT
+
+      - name: Assign port based on branch
+        id: assign
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          echo "branch_name=${BRANCH}" >> $GITHUB_OUTPUT
+
+          # Fixed ports for main branches
+          if [[ "${BRANCH}" == "develop" ]]; then
+            PORT=9000
+            CONTAINER_NAME="staging-main"
+          elif [[ "${BRANCH}" == "main" ]]; then
+            # Skip staging for main branch (it goes to production)
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            # Generate consistent port for feature branches (9001-9099)
+            # Use hash of branch name for consistent port assignment
+            HASH=$(echo -n "${BRANCH}" | md5sum | cut -c1-8)
+            PORT_OFFSET=$((0x${HASH} % 99))
+            PORT=$((9001 + ${PORT_OFFSET}))
+
+            # Sanitize branch name for container name
+            SAFE_BRANCH=$(echo "${BRANCH}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            CONTAINER_NAME="staging-${SAFE_BRANCH}"
+          fi
+
+          echo "port=${PORT}" >> $GITHUB_OUTPUT
+          echo "container_name=${CONTAINER_NAME}" >> $GITHUB_OUTPUT
+
+          echo "📌 Branch: ${BRANCH}"
+          echo "📌 Port: ${PORT}"
+          echo "📌 Container: ${CONTAINER_NAME}"
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: assign-port
+    if: needs.assign-port.outputs.skip != 'true'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ needs.assign-port.outputs.branch_name }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=staging-${{ needs.assign-port.outputs.branch_name }}
+            type=sha,format=long,prefix=staging-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_ENV=staging
+            APP_DEBUG=true
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [assign-port, build-and-push]
+    if: needs.assign-port.outputs.skip != 'true'
+    environment:
+      name: staging-${{ needs.assign-port.outputs.branch_name }}
+      url: http://${{ secrets.DEPLOY_HOST }}:${{ needs.assign-port.outputs.port }}
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+    steps:
+      - name: Deploy to staging server
+        id: deploy
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.STAGING_HOST || secrets.DEPLOY_HOST }}
+          username: ${{ secrets.STAGING_USER || secrets.DEPLOY_USER }}
+          key: ${{ secrets.STAGING_KEY || secrets.DEPLOY_KEY }}
+          port: ${{ secrets.STAGING_PORT || secrets.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+
+            CONTAINER_NAME="${{ needs.assign-port.outputs.container_name }}"
+            PORT="${{ needs.assign-port.outputs.port }}"
+            IMAGE_TAG="staging-${{ needs.assign-port.outputs.branch_name }}"
+
+            echo "🚀 Deploying ${CONTAINER_NAME} on port ${PORT}"
+
+            # Pull the new image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+
+            # Stop and remove existing container if it exists
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+              echo "⏹️  Stopping existing container..."
+              docker stop ${CONTAINER_NAME} || true
+              docker rm ${CONTAINER_NAME} || true
+            fi
+
+            # Create a file to track port assignments
+            mkdir -p /var/lib/staging-ports
+            echo "${{ needs.assign-port.outputs.branch_name }}" > /var/lib/staging-ports/port-${PORT}.txt
+
+            # Run the new container
+            docker run -d \
+              --name ${CONTAINER_NAME} \
+              -p ${PORT}:80 \
+              --restart unless-stopped \
+              --health-cmd="curl -f http://localhost/ || exit 1" \
+              --health-interval=30s \
+              --health-timeout=3s \
+              --health-retries=3 \
+              -e APP_ENV=staging \
+              -e APP_DEBUG=true \
+              -e STAGING_BRANCH="${{ needs.assign-port.outputs.branch_name }}" \
+              -e STAGING_PORT="${PORT}" \
+              --label "staging=true" \
+              --label "branch=${{ needs.assign-port.outputs.branch_name }}" \
+              --label "port=${PORT}" \
+              --label "deployed=$(date -Iseconds)" \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+
+            # Wait for health check
+            echo "⏳ Waiting for container to be healthy..."
+            for i in {1..30}; do
+              if docker ps --filter "name=${CONTAINER_NAME}" --filter "health=healthy" --format "{{.Names}}" | grep -q "${CONTAINER_NAME}"; then
+                echo "✅ Container is healthy!"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ Container failed to become healthy"
+                docker logs ${CONTAINER_NAME}
+                exit 1
+              fi
+              sleep 2
+            done
+
+            # Clean up old images
+            docker image prune -af --filter "until=24h"
+
+            echo "✅ Deployment successful!"
+            echo "🌐 URL: http://${{ secrets.DEPLOY_HOST }}:${PORT}"
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const port = '${{ needs.assign-port.outputs.port }}';
+            const host = '${{ secrets.DEPLOY_HOST }}';
+            const branch = '${{ needs.assign-port.outputs.branch_name }}';
+            const url = `http://${host}:${port}`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('🚀 Staging Environment')
+            );
+
+            const body = `🚀 **Staging Environment Deployed!**
+
+            **Branch:** \`${branch}\`
+            **URL:** ${url}
+            **Port:** ${port}
+            **Container:** \`${{ needs.assign-port.outputs.container_name }}\`
+
+            This staging environment will be automatically updated with each push to this PR.
+
+            ---
+            *Last deployed: ${new Date().toISOString()}*`;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Output deployment info
+        run: |
+          echo "✅ Staging Deployed Successfully!"
+          echo "📍 URL: http://${{ secrets.DEPLOY_HOST }}:${{ needs.assign-port.outputs.port }}"
+          echo "🏷️ Branch: ${{ needs.assign-port.outputs.branch_name }}"
+          echo "📦 Container: ${{ needs.assign-port.outputs.container_name }}"
+          echo "🔌 Port: ${{ needs.assign-port.outputs.port }}"

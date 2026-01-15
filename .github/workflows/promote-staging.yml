@@ -1,0 +1,244 @@
+name: Promote Staging to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_env:
+        description: 'Source staging environment'
+        required: true
+        type: choice
+        options:
+          - develop
+          - feature-branch
+        default: develop
+      source_branch:
+        description: 'Source branch name (for feature-branch option)'
+        required: false
+        type: string
+      confirm_promotion:
+        description: 'Type "PROMOTE" to confirm promotion to production'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  validate-and-prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      source_tag: ${{ steps.prepare.outputs.source_tag }}
+      source_port: ${{ steps.prepare.outputs.source_port }}
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [[ "${{ github.event.inputs.confirm_promotion }}" != "PROMOTE" ]]; then
+            echo "❌ Promotion not confirmed. Please type 'PROMOTE' to confirm."
+            exit 1
+          fi
+
+      - name: Prepare source information
+        id: prepare
+        run: |
+          if [[ "${{ github.event.inputs.source_env }}" == "develop" ]]; then
+            echo "source_tag=staging-develop" >> $GITHUB_OUTPUT
+            echo "source_port=9000" >> $GITHUB_OUTPUT
+            echo "source_branch=develop" >> $GITHUB_OUTPUT
+          else
+            if [[ -z "${{ github.event.inputs.source_branch }}" ]]; then
+              echo "❌ Source branch is required for feature-branch promotion"
+              exit 1
+            fi
+            BRANCH="${{ github.event.inputs.source_branch }}"
+            echo "source_tag=staging-${BRANCH}" >> $GITHUB_OUTPUT
+
+            # Calculate port for feature branch
+            HASH=$(echo -n "${BRANCH}" | md5sum | cut -c1-8)
+            PORT_OFFSET=$((0x${HASH} % 99))
+            PORT=$((9001 + ${PORT_OFFSET}))
+            echo "source_port=${PORT}" >> $GITHUB_OUTPUT
+            echo "source_branch=${BRANCH}" >> $GITHUB_OUTPUT
+          fi
+
+  test-staging:
+    runs-on: ubuntu-latest
+    needs: validate-and-prepare
+    steps:
+      - name: Test staging environment
+        run: |
+          STAGING_URL="http://${{ secrets.DEPLOY_HOST }}:${{ needs.validate-and-prepare.outputs.source_port }}"
+          echo "🧪 Testing staging environment at: ${STAGING_URL}"
+
+          # Basic health check
+          if ! curl -f -s -o /dev/null -w "%{http_code}" ${STAGING_URL}; then
+            echo "❌ Staging environment is not responding"
+            exit 1
+          fi
+
+          echo "✅ Staging environment is healthy"
+
+      - name: Run smoke tests
+        continue-on-error: true
+        run: |
+          STAGING_URL="http://${{ secrets.DEPLOY_HOST }}:${{ needs.validate-and-prepare.outputs.source_port }}"
+
+          # Add your smoke tests here
+          echo "🔍 Running smoke tests..."
+
+          # Example tests (customize based on your application)
+          # Check if main page loads
+          curl -f ${STAGING_URL}/ || exit 1
+
+          # Check if health endpoint exists (if you have one)
+          # curl -f ${STAGING_URL}/health || exit 1
+
+          echo "✅ Smoke tests passed"
+
+  promote-to-production:
+    runs-on: ubuntu-latest
+    needs: [validate-and-prepare, test-staging]
+    environment:
+      name: production
+      url: http://${{ secrets.DEPLOY_HOST }}:8080
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag staging image as production
+        run: |
+          SOURCE_TAG="${{ needs.validate-and-prepare.outputs.source_tag }}"
+          PRODUCTION_TAG="production-$(date +%Y%m%d-%H%M%S)"
+
+          echo "🏷️ Tagging staging image for production"
+          echo "Source: ${SOURCE_TAG}"
+          echo "Production: ${PRODUCTION_TAG}"
+
+          # Pull staging image
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SOURCE_TAG}
+
+          # Tag as production
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SOURCE_TAG} \
+                     ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PRODUCTION_TAG}
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SOURCE_TAG} \
+                     ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Push production tags
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${PRODUCTION_TAG}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          echo "production_tag=${PRODUCTION_TAG}" >> $GITHUB_ENV
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+
+            echo "🚀 Promoting staging to production"
+
+            # Pull the new production image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Backup current production (optional)
+            if docker ps --format '{{.Names}}' | grep -q "^php-app$"; then
+              echo "📦 Creating backup of current production..."
+              docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+                        ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$(date +%Y%m%d-%H%M%S) || true
+            fi
+
+            # Stop current production
+            docker stop php-app || true
+            docker rm php-app || true
+
+            # Start new production container
+            docker run -d --name php-app \
+              -p 8080:80 \
+              --restart unless-stopped \
+              --health-cmd="curl -f http://localhost/ || exit 1" \
+              --health-interval=30s \
+              --health-timeout=3s \
+              --health-retries=3 \
+              -e APP_ENV=production \
+              -e APP_DEBUG=false \
+              --label "environment=production" \
+              --label "promoted_from=${{ needs.validate-and-prepare.outputs.source_tag }}" \
+              --label "promoted_at=$(date -Iseconds)" \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Wait for health check
+            echo "⏳ Waiting for production to be healthy..."
+            for i in {1..30}; do
+              if docker ps --filter "name=php-app" --filter "health=healthy" --format "{{.Names}}" | grep -q "php-app"; then
+                echo "✅ Production is healthy!"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ Production failed to become healthy"
+                docker logs php-app
+                exit 1
+              fi
+              sleep 2
+            done
+
+            # Clean up
+            docker system prune -f
+
+            echo "✅ Successfully promoted staging to production!"
+            echo "🌐 Production URL: http://${{ secrets.DEPLOY_HOST }}:8080"
+
+      - name: Create deployment record
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              task: 'deploy',
+              auto_merge: false,
+              required_contexts: [],
+              payload: {
+                promoted_from: '${{ needs.validate-and-prepare.outputs.source_tag }}',
+                promoted_by: context.actor,
+                source_port: '${{ needs.validate-and-prepare.outputs.source_port }}'
+              },
+              environment: 'production',
+              description: 'Promoted from staging'
+            });
+
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'success',
+              environment_url: 'http://${{ secrets.DEPLOY_HOST }}:8080',
+              description: 'Deployment completed successfully'
+            });
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [validate-and-prepare, promote-to-production]
+    if: always()
+    steps:
+      - name: Send notification
+        run: |
+          if [[ "${{ needs.promote-to-production.result }}" == "success" ]]; then
+            echo "✅ PROMOTION SUCCESSFUL"
+            echo "Source: ${{ needs.validate-and-prepare.outputs.source_tag }}"
+            echo "Production URL: http://${{ secrets.DEPLOY_HOST }}:8080"
+          else
+            echo "❌ PROMOTION FAILED"
+            echo "Please check the workflow logs for details"
+          fi

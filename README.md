@@ -150,15 +150,109 @@ This project demonstrates:
 - **Security**: Secrets management, minimal Docker images
 - **Monitoring**: Health checks and automatic recovery
 
+## Staging Environments
+
+### Port-Based Staging System
+
+The project now includes a comprehensive staging environment system that allows multiple staging deployments on the same server using different ports.
+
+#### Port Allocation:
+- **Production**: Port 8080 (main branch)
+- **Main Staging**: Port 9000 (develop branch)
+- **Feature Staging**: Ports 9001-9099 (feature branches, dynamically assigned)
+
+#### Automatic Deployments:
+- Push to `develop` → Deploys to staging at `http://YOUR-IP:9000`
+- Push to `feature/*` → Deploys to dynamic port `http://YOUR-IP:90XX`
+- Pull requests → Automatic preview environment with URL in PR comment
+
+#### Staging Workflows:
+
+1. **Deploy to Staging** (`staging-deploy.yml`)
+   - Triggered on push to develop or feature branches
+   - Creates isolated Docker containers
+   - Assigns consistent ports based on branch names
+   - Comments on PRs with staging URLs
+
+2. **Cleanup Staging** (`staging-cleanup.yml`)
+   - Runs daily at 2 AM UTC
+   - Removes staging environments older than 7 days
+   - Automatically cleans up when PRs are closed
+   - Manual trigger available for immediate cleanup
+
+3. **Promote to Production** (`promote-staging.yml`)
+   - Manual workflow to promote staging to production
+   - Validates staging health before promotion
+   - Creates deployment records
+   - Maintains backup of previous production
+
+#### Managing Staging Environments:
+
+Use the included management script:
+
+```bash
+# List all staging environments
+./scripts/manage-staging.sh list
+
+# Check status of specific environment
+./scripts/manage-staging.sh status develop
+./scripts/manage-staging.sh status feature/new-feature
+
+# View logs
+./scripts/manage-staging.sh logs develop
+
+# Check health
+./scripts/manage-staging.sh health develop
+
+# Get URL for a branch
+./scripts/manage-staging.sh url feature/login
+
+# Stop/start environments
+./scripts/manage-staging.sh stop feature/test
+./scripts/manage-staging.sh start feature/test
+
+# Remove specific environment
+./scripts/manage-staging.sh remove feature/old-feature
+
+# Cleanup old environments (older than 7 days)
+./scripts/manage-staging.sh cleanup 7
+
+# Execute commands in container
+./scripts/manage-staging.sh exec develop ls -la
+```
+
+#### Required GitHub Secrets:
+
+For staging on the same server as production:
+- Uses existing secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_KEY`
+
+For separate staging server (optional):
+- `STAGING_HOST`: Staging server IP
+- `STAGING_USER`: SSH username
+- `STAGING_KEY`: SSH private key
+- `STAGING_PORT`: SSH port (default: 22)
+
+#### Example Staging URLs:
+
+After deployment, access your staging environments at:
+- Main staging: `http://YOUR-SERVER-IP:9000`
+- Feature branch: `http://YOUR-SERVER-IP:9001` (port varies by branch)
+
+The exact URL will be displayed in:
+- GitHub Actions output
+- Pull request comments
+- Deployment environment URL in GitHub
+
 ## Future Enhancements
 
-- [ ] Add staging environment
+- [x] Add staging environment
 - [ ] Implement blue-green deployment
 - [ ] Add monitoring and logging (Prometheus/Grafana)
 - [ ] Kubernetes deployment option
 - [ ] Database integration example
 - [ ] Load balancing setup
 - [ ] SSL/TLS configuration
+- [ ] Add custom domain support for staging
 
 ## Contributing
 
