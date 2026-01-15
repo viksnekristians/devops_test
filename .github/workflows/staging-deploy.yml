@@ -171,9 +171,9 @@ jobs:
               docker rm ${CONTAINER_NAME} || true
             fi
 
-            # Create a file to track port assignments
-            mkdir -p /var/lib/staging-ports
-            echo "${{ needs.assign-port.outputs.branch_name }}" > /var/lib/staging-ports/port-${PORT}.txt
+            # Create a file to track port assignments (in user's home directory)
+            mkdir -p ~/staging-ports
+            echo "${{ needs.assign-port.outputs.branch_name }}" > ~/staging-ports/port-${PORT}.txt
 
             # Run the new container
             docker run -d \

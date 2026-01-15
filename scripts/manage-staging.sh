@@ -155,8 +155,8 @@ remove_staging() {
     docker rm ${container_name} 2>/dev/null && echo -e "${GREEN}✅ Removed container${NC}" || echo -e "${YELLOW}Container not found${NC}"
 
     # Remove port tracking file if on server
-    if [[ -f "/var/lib/staging-ports/port-${port}.txt" ]]; then
-        rm -f "/var/lib/staging-ports/port-${port}.txt"
+    if [[ -f "$HOME/staging-ports/port-${port}.txt" ]]; then
+        rm -f "$HOME/staging-ports/port-${port}.txt"
         echo -e "${GREEN}✅ Removed port tracking${NC}"
     fi
 

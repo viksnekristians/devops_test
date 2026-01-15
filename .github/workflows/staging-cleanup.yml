@@ -74,7 +74,7 @@ jobs:
             fi
 
             # Remove port assignment tracking
-            rm -f /var/lib/staging-ports/port-${PORT}.txt
+            rm -f ~/staging-ports/port-${PORT}.txt
 
             # Clean up related images
             docker images --format "{{.Repository}}:{{.Tag}}" | \
@@ -155,7 +155,7 @@ jobs:
 
                   # Remove port tracking file
                   if [[ -n "${PORT}" ]]; then
-                    rm -f /var/lib/staging-ports/port-${PORT}.txt
+                    rm -f ~/staging-ports/port-${PORT}.txt
                   fi
 
                   echo "✅ Removed: ${CONTAINER_NAME}"
