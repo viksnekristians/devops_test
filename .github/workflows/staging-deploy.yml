@@ -26,6 +26,11 @@ env:
 jobs:
   assign-port:
     runs-on: ubuntu-latest
+    # Skip duplicate runs from push + PR
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip staging]')) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     outputs:
       port: ${{ steps.assign.outputs.port }}
       branch_name: ${{ steps.assign.outputs.branch_name }}
@@ -209,8 +214,8 @@ jobs:
               sleep 2
             done
 
-            # Clean up old images
-            docker image prune -af --filter "until=24h"
+            # Clean up old images (ignore errors if another cleanup is running)
+            docker image prune -af --filter "until=24h" || true
 
             echo "✅ Deployment successful!"
             echo "🌐 URL: http://${{ secrets.DEPLOY_HOST }}:${PORT}"
