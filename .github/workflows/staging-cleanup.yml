@@ -1,0 +1,194 @@
+name: Cleanup Staging Environments
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      max_age_days:
+        description: 'Remove staging environments older than X days'
+        required: false
+        type: string
+        default: '7'
+      dry_run:
+        description: 'Dry run (show what would be removed without removing)'
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup-on-pr-close:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Get PR branch name
+        id: branch
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          echo "name=${BRANCH}" >> $GITHUB_OUTPUT
+
+          # Calculate port for this branch (same logic as deploy)
+          if [[ "${BRANCH}" != "develop" ]]; then
+            HASH=$(echo -n "${BRANCH}" | md5sum | cut -c1-8)
+            PORT_OFFSET=$((0x${HASH} % 99))
+            PORT=$((9001 + ${PORT_OFFSET}))
+            SAFE_BRANCH=$(echo "${BRANCH}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            CONTAINER_NAME="staging-${SAFE_BRANCH}"
+          else
+            # Don't remove develop staging
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "port=${PORT}" >> $GITHUB_OUTPUT
+          echo "container_name=${CONTAINER_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Remove staging environment
+        if: steps.branch.outputs.skip != 'true'
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.STAGING_HOST || secrets.DEPLOY_HOST }}
+          username: ${{ secrets.STAGING_USER || secrets.DEPLOY_USER }}
+          key: ${{ secrets.STAGING_KEY || secrets.DEPLOY_KEY }}
+          port: ${{ secrets.STAGING_PORT || secrets.DEPLOY_PORT || '22' }}
+          script: |
+            CONTAINER_NAME="${{ steps.branch.outputs.container_name }}"
+            PORT="${{ steps.branch.outputs.port }}"
+
+            echo "🧹 Cleaning up staging for closed PR"
+            echo "📦 Container: ${CONTAINER_NAME}"
+            echo "🔌 Port: ${PORT}"
+
+            # Stop and remove container
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+              docker stop ${CONTAINER_NAME} || true
+              docker rm ${CONTAINER_NAME} || true
+              echo "✅ Removed container: ${CONTAINER_NAME}"
+            else
+              echo "ℹ️ Container not found: ${CONTAINER_NAME}"
+            fi
+
+            # Remove port assignment tracking
+            rm -f ~/staging-ports/port-${PORT}.txt
+
+            # Clean up related images
+            docker images --format "{{.Repository}}:{{.Tag}}" | \
+              grep "staging-${{ steps.branch.outputs.name }}" | \
+              xargs -r docker rmi || true
+
+      - name: Comment on PR
+        if: steps.branch.outputs.skip != 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `🧹 **Staging environment has been removed**\n\nThe staging environment for this PR has been cleaned up after the PR was closed.`
+            });
+
+  scheduled-cleanup:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clean up old staging environments
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.STAGING_HOST || secrets.DEPLOY_HOST }}
+          username: ${{ secrets.STAGING_USER || secrets.DEPLOY_USER }}
+          key: ${{ secrets.STAGING_KEY || secrets.DEPLOY_KEY }}
+          port: ${{ secrets.STAGING_PORT || secrets.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+
+            MAX_AGE_DAYS="${{ github.event.inputs.max_age_days || '7' }}"
+            DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+
+            echo "🧹 Staging Environment Cleanup"
+            echo "📅 Removing environments older than ${MAX_AGE_DAYS} days"
+            if [[ "${DRY_RUN}" == "true" ]]; then
+              echo "⚠️  DRY RUN MODE - No actual removals will be performed"
+            fi
+
+            # Find staging containers older than MAX_AGE_DAYS
+            CUTOFF_DATE=$(date -d "${MAX_AGE_DAYS} days ago" +%s)
+
+            # List all staging containers with their metadata
+            docker ps -a --filter "label=staging=true" --format "table {{.Names}}\t{{.Label \"deployed\"}}\t{{.Label \"branch\"}}\t{{.Label \"port\"}}" | tail -n +2 | while read -r line; do
+              CONTAINER_NAME=$(echo "$line" | awk '{print $1}')
+              DEPLOYED_DATE=$(echo "$line" | awk '{print $2}')
+              BRANCH=$(echo "$line" | awk '{print $3}')
+              PORT=$(echo "$line" | awk '{print $4}')
+
+              # Skip containers without deployed date
+              if [[ -z "${DEPLOYED_DATE}" || "${DEPLOYED_DATE}" == "<no" ]]; then
+                echo "⚠️  Skipping ${CONTAINER_NAME} - no deployment date"
+                continue
+              fi
+
+              # Skip the main staging environment (develop branch)
+              if [[ "${BRANCH}" == "develop" ]]; then
+                echo "ℹ️  Keeping main staging: ${CONTAINER_NAME}"
+                continue
+              fi
+
+              # Convert deployed date to timestamp
+              if command -v date >/dev/null 2>&1; then
+                DEPLOYED_TIMESTAMP=$(date -d "${DEPLOYED_DATE}" +%s 2>/dev/null || echo "0")
+              else
+                DEPLOYED_TIMESTAMP=0
+              fi
+
+              # Check if container is old enough to remove
+              if [[ ${DEPLOYED_TIMESTAMP} -lt ${CUTOFF_DATE} ]]; then
+                echo "🗑️  Found old container: ${CONTAINER_NAME} (branch: ${BRANCH}, deployed: ${DEPLOYED_DATE})"
+
+                if [[ "${DRY_RUN}" != "true" ]]; then
+                  docker stop ${CONTAINER_NAME} || true
+                  docker rm ${CONTAINER_NAME} || true
+
+                  # Remove port tracking file
+                  if [[ -n "${PORT}" ]]; then
+                    rm -f ~/staging-ports/port-${PORT}.txt
+                  fi
+
+                  echo "✅ Removed: ${CONTAINER_NAME}"
+                else
+                  echo "  [DRY RUN] Would remove: ${CONTAINER_NAME}"
+                fi
+              else
+                echo "✅ Keeping recent: ${CONTAINER_NAME} (deployed: ${DEPLOYED_DATE})"
+              fi
+            done
+
+            # Clean up unused staging images
+            echo ""
+            echo "🖼️  Cleaning up unused staging images..."
+            if [[ "${DRY_RUN}" != "true" ]]; then
+              # Remove staging images not used by any container
+              docker images --format "{{.Repository}}:{{.Tag}}\t{{.ID}}" | \
+                grep "staging-" | \
+                while read repo_tag image_id; do
+                  if ! docker ps -a --format "{{.Image}}" | grep -q "${repo_tag}"; then
+                    echo "Removing unused image: ${repo_tag}"
+                    docker rmi ${image_id} || true
+                  fi
+                done
+
+              # General cleanup
+              docker system prune -f --filter "until=${MAX_AGE_DAYS}d"
+              echo "✅ Image cleanup complete"
+            else
+              echo "[DRY RUN] Would clean up unused images"
+            fi
+
+            # Show current staging status
+            echo ""
+            echo "📊 Current Staging Environments:"
+            docker ps --filter "label=staging=true" --format "table {{.Names}}\t{{.Ports}}\t{{.Label \"branch\"}}\t{{.Status}}"

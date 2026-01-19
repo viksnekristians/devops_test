@@ -37,7 +37,7 @@ $greeting = getGreeting();
 <body>
     <div class="container">
         <h1><?php echo $greeting; ?></h1>
-        <p>This is a simple dockerized PHP application</p>
+        <p>This is a dockerized PHP application </p>
     </div>
 </body>
 </html>
