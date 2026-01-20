@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     libonig-dev \
     zip \
     unzip \
-    && docker-php-ext-install dom xml xmlwriter mbstring zip \
+    && docker-php-ext-install dom xml xmlwriter mbstring zip pdo pdo_mysql mysqli \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

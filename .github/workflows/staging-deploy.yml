@@ -214,35 +214,52 @@ jobs:
             mkdir -p ~/staging-ports
             echo "${{ needs.assign-port.outputs.branch_name }}" > ~/staging-ports/port-${PORT}.txt
 
-            # Run the new container
-            docker run -d \
-              --name ${CONTAINER_NAME} \
-              -p ${PORT}:80 \
-              --restart unless-stopped \
-              --health-cmd="curl -f http://localhost/ || exit 1" \
-              --health-interval=30s \
-              --health-timeout=3s \
-              --health-retries=3 \
-              -e APP_ENV=staging \
-              -e APP_DEBUG=true \
-              -e STAGING_BRANCH="${{ needs.assign-port.outputs.branch_name }}" \
-              -e STAGING_PORT="${PORT}" \
-              --label "staging=true" \
-              --label "branch=${{ needs.assign-port.outputs.branch_name }}" \
-              --label "port=${PORT}" \
-              --label "deployed=$(date -Iseconds)" \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_TAG}
+            # Ensure docker-compose is installed
+            if ! command -v docker-compose &> /dev/null; then
+              echo "Installing docker-compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
 
-            # Wait for health check
-            echo "⏳ Waiting for container to be healthy..."
+            # Create staging directory if not exists
+            mkdir -p ~/staging-deployments/${CONTAINER_NAME}
+            cd ~/staging-deployments/${CONTAINER_NAME}
+
+            # Download compose template from repository
+            curl -sL https://raw.githubusercontent.com/${{ github.repository }}/${{ needs.assign-port.outputs.branch_name }}/docker-compose.staging.yml -o docker-compose.yml
+
+            # Generate secure database password for this instance
+            DB_PASSWORD="staging_$(openssl rand -hex 16)_${PORT}"
+
+            # Create .env file with deployment-specific variables
+            cat > .env <<EOF
+            IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_TAG}
+            CONTAINER_NAME=${CONTAINER_NAME}
+            PORT=${PORT}
+            BRANCH_NAME=${{ needs.assign-port.outputs.branch_name }}
+            DB_PASSWORD=${DB_PASSWORD}
+            DEPLOYED_AT=$(date -Iseconds)
+            EOF
+
+            # Stop and remove existing containers if they exist
+            docker-compose down --volumes 2>/dev/null || true
+
+            # Pull the latest images
+            docker-compose pull
+
+            # Start the services
+            docker-compose up -d
+
+            # Wait for services to be healthy
+            echo "⏳ Waiting for services to be healthy..."
             for i in {1..30}; do
-              if docker ps --filter "name=${CONTAINER_NAME}" --filter "health=healthy" --format "{{.Names}}" | grep -q "${CONTAINER_NAME}"; then
-                echo "✅ Container is healthy!"
+              if docker-compose ps | grep -q "healthy"; then
+                echo "✅ Services are healthy!"
                 break
               fi
               if [ $i -eq 30 ]; then
-                echo "❌ Container failed to become healthy"
-                docker logs ${CONTAINER_NAME}
+                echo "❌ Services failed to become healthy"
+                docker-compose logs
                 exit 1
               fi
               sleep 2
