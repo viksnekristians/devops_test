@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   php-app:
     image: ${IMAGE_TAG:-ghcr.io/viksnekristians/devops_test:latest}

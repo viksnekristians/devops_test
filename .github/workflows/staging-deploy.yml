@@ -248,8 +248,15 @@ jobs:
             DEPLOYED_AT=$(date -Iseconds)
             EOF
 
-            # Stop and remove existing containers if they exist
-            docker compose down --volumes 2>/dev/null || true
+            # Clean up any existing deployment completely
+            # This handles network conflicts and stale resources
+            if [[ -f docker-compose.yml ]]; then
+              echo "Cleaning up existing deployment..."
+              docker compose down --volumes --remove-orphans 2>/dev/null || true
+              # Remove any conflicting networks
+              docker network rm ${CONTAINER_NAME}-network 2>/dev/null || true
+              docker network rm staging-feature-db-image-network 2>/dev/null || true
+            fi
 
             # Pull the latest images
             docker compose pull
