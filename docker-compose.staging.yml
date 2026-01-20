@@ -1,0 +1,64 @@
+services:
+  app:
+    image: ${IMAGE_TAG}
+    container_name: ${CONTAINER_NAME}
+    ports:
+      - "${PORT}:80"
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+      - DB_HOST=${CONTAINER_NAME}-db
+      - DB_NAME=staging_db
+      - DB_USER=staging_user
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - APP_ENV=staging
+      - APP_DEBUG=true
+      - STAGING_BRANCH=${BRANCH_NAME}
+      - STAGING_PORT=${PORT}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    labels:
+      - "staging=true"
+      - "branch=${BRANCH_NAME}"
+      - "port=${PORT}"
+      - "deployed=${DEPLOYED_AT}"
+
+  db:
+    image: mysql:8.0
+    container_name: ${CONTAINER_NAME}-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_DATABASE=staging_db
+      - MYSQL_USER=staging_user
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+    labels:
+      - "staging=true"
+      - "branch=${BRANCH_NAME}"
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  db-data:
+    driver: local

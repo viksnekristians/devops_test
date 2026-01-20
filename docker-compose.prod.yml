@@ -1,0 +1,55 @@
+services:
+  php-app:
+    image: ${IMAGE_TAG:-ghcr.io/viksnekristians/devops_test:latest}
+    container_name: php-app
+    ports:
+      - "8080:80"
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+      - DB_HOST=prod-db
+      - DB_NAME=${DB_NAME:-production_db}
+      - DB_USER=${DB_USER:-prod_user}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - APP_ENV=production
+      - APP_DEBUG=false
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - prod-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  db:
+    image: mysql:8.0
+    container_name: prod-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME:-production_db}
+      - MYSQL_USER=${DB_USER:-prod_user}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - prod-db-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - prod-network
+
+networks:
+  prod-network:
+    driver: bridge
+
+volumes:
+  prod-db-data:
+    driver: local

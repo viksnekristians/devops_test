@@ -70,17 +70,28 @@ list_staging() {
     echo -e "${BLUE}📋 Staging Environments:${NC}"
     echo ""
 
-    if docker ps -a --filter "label=staging=true" --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}\t{{.Label \"branch\"}}" 2>/dev/null | grep -q staging; then
-        docker ps -a --filter "label=staging=true" \
-            --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}\t{{.Label \"branch\"}}\t{{.Label \"deployed\"}}" | \
-            column -t -s $'\t'
+    # Check staging deployments directory
+    if [[ -d "$HOME/staging-deployments" ]]; then
+        for dir in $HOME/staging-deployments/*/; do
+            if [[ -f "${dir}docker-compose.yml" ]]; then
+                DEPLOY_NAME=$(basename "$dir")
+                echo -e "\n${YELLOW}${DEPLOY_NAME}:${NC}"
+                cd "$dir"
+                docker compose ps 2>/dev/null || echo "  Not running"
+            fi
+        done
     else
         echo -e "${YELLOW}No staging environments found${NC}"
     fi
 
     echo ""
     echo -e "${GREEN}Production:${NC}"
-    docker ps --filter "name=php-app" --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}" 2>/dev/null || echo "Not running"
+    if [[ -f "$HOME/production/docker-compose.yml" ]]; then
+        cd $HOME/production
+        docker compose ps 2>/dev/null || echo "Not running"
+    else
+        echo "Not deployed"
+    fi
 }
 
 # Show status of specific staging
@@ -88,6 +99,7 @@ status_staging() {
     local branch=$1
     local container_name=$(get_container_name "$branch")
     local port=$(get_port "$branch")
+    local deploy_dir="$HOME/staging-deployments/${container_name}"
 
     echo -e "${BLUE}📊 Status for branch: ${branch}${NC}"
     echo "Container: ${container_name}"
@@ -95,23 +107,20 @@ status_staging() {
     echo "URL: http://${DEFAULT_HOST}:${port}"
     echo ""
 
-    if docker ps --filter "name=${container_name}" --format "{{.Names}}" | grep -q "${container_name}"; then
-        echo -e "${GREEN}✅ Running${NC}"
-        docker ps --filter "name=${container_name}" --format "table {{.Status}}\t{{.Created}}"
+    if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
+        cd "${deploy_dir}"
+        docker compose ps
 
-        # Check health
-        if docker ps --filter "name=${container_name}" --filter "health=healthy" --format "{{.Names}}" | grep -q "${container_name}"; then
-            echo -e "${GREEN}🏥 Healthy${NC}"
+        # Check health status
+        if docker compose ps | grep -q "healthy"; then
+            echo -e "\n${GREEN}🏥 Healthy${NC}"
+        elif docker compose ps | grep -q "starting"; then
+            echo -e "\n${YELLOW}⚠️  Starting up...${NC}"
         else
-            echo -e "${YELLOW}⚠️  Not healthy yet${NC}"
+            echo -e "\n${YELLOW}⚠️  Not healthy${NC}"
         fi
     else
-        if docker ps -a --filter "name=${container_name}" --format "{{.Names}}" | grep -q "${container_name}"; then
-            echo -e "${YELLOW}⏸️  Stopped${NC}"
-            docker ps -a --filter "name=${container_name}" --format "table {{.Status}}\t{{.Created}}"
-        else
-            echo -e "${RED}❌ Not found${NC}"
-        fi
+        echo -e "${RED}❌ Not deployed${NC}"
     fi
 }
 
@@ -119,49 +128,74 @@ status_staging() {
 show_logs() {
     local branch=$1
     local container_name=$(get_container_name "$branch")
+    local deploy_dir="$HOME/staging-deployments/${container_name}"
 
-    echo -e "${BLUE}📜 Logs for ${container_name}:${NC}"
-    docker logs --tail 50 -f ${container_name} 2>&1 || echo -e "${RED}Container not found${NC}"
+    if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
+        cd "${deploy_dir}"
+        echo -e "${BLUE}📜 Logs for ${container_name}:${NC}"
+        docker compose logs --tail 50 -f
+    else
+        echo -e "${RED}Deployment not found${NC}"
+    fi
 }
 
 # Stop staging environment
 stop_staging() {
     local branch=$1
     local container_name=$(get_container_name "$branch")
+    local deploy_dir="$HOME/staging-deployments/${container_name}"
 
-    echo -e "${YELLOW}⏹️  Stopping ${container_name}...${NC}"
-    docker stop ${container_name} && echo -e "${GREEN}✅ Stopped${NC}" || echo -e "${RED}❌ Failed to stop or not found${NC}"
+    if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
+        cd "${deploy_dir}"
+        echo -e "${YELLOW}⏹️  Stopping ${container_name}...${NC}"
+        docker compose stop && echo -e "${GREEN}✅ Stopped${NC}" || echo -e "${RED}❌ Failed to stop${NC}"
+    else
+        echo -e "${RED}Deployment not found${NC}"
+    fi
 }
 
 # Start staging environment
 start_staging() {
     local branch=$1
     local container_name=$(get_container_name "$branch")
+    local deploy_dir="$HOME/staging-deployments/${container_name}"
 
-    echo -e "${GREEN}▶️  Starting ${container_name}...${NC}"
-    docker start ${container_name} && echo -e "${GREEN}✅ Started${NC}" || echo -e "${RED}❌ Failed to start or not found${NC}"
+    if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
+        cd "${deploy_dir}"
+        echo -e "${GREEN}▶️  Starting ${container_name}...${NC}"
+        docker compose start && echo -e "${GREEN}✅ Started${NC}" || echo -e "${RED}❌ Failed to start${NC}"
+    else
+        echo -e "${RED}Deployment not found${NC}"
+    fi
 }
 
 # Remove staging environment
 remove_staging() {
     local branch=$1
     local container_name=$(get_container_name "$branch")
-    local port=$(get_port "$branch")
+    local deploy_dir="$HOME/staging-deployments/${container_name}"
 
     echo -e "${RED}🗑️  Removing ${container_name}...${NC}"
 
-    # Stop and remove container
-    docker stop ${container_name} 2>/dev/null || true
-    docker rm ${container_name} 2>/dev/null && echo -e "${GREEN}✅ Removed container${NC}" || echo -e "${YELLOW}Container not found${NC}"
+    if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
+        cd "${deploy_dir}"
+        # Stop and remove containers and volumes
+        docker compose down --volumes
+        echo -e "${GREEN}✅ Removed containers and volumes${NC}"
 
-    # Remove port tracking file if on server
-    if [[ -f "$HOME/staging-ports/port-${port}.txt" ]]; then
-        rm -f "$HOME/staging-ports/port-${port}.txt"
-        echo -e "${GREEN}✅ Removed port tracking${NC}"
+        # Remove deployment directory
+        cd ~
+        rm -rf "${deploy_dir}"
+        echo -e "${GREEN}✅ Removed deployment directory${NC}"
+    else
+        echo -e "${YELLOW}Deployment not found${NC}"
     fi
 
-    # Remove related images
-    docker images --format "{{.Repository}}:{{.Tag}}" | grep "staging-${branch}" | xargs -r docker rmi 2>/dev/null || true
+    # Remove port tracking file if exists
+    local port=$(get_port "$branch")
+    if [[ -f "$HOME/staging-ports/port-${port}.txt" ]]; then
+        rm -f "$HOME/staging-ports/port-${port}.txt"
+    fi
 }
 
 # Cleanup old environments

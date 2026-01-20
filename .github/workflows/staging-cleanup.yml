@@ -59,18 +59,24 @@ jobs:
           script: |
             CONTAINER_NAME="${{ steps.branch.outputs.container_name }}"
             PORT="${{ steps.branch.outputs.port }}"
+            DEPLOY_DIR="$HOME/staging-deployments/${CONTAINER_NAME}"
 
             echo "🧹 Cleaning up staging for closed PR"
             echo "📦 Container: ${CONTAINER_NAME}"
             echo "🔌 Port: ${PORT}"
 
-            # Stop and remove container
-            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-              docker stop ${CONTAINER_NAME} || true
-              docker rm ${CONTAINER_NAME} || true
-              echo "✅ Removed container: ${CONTAINER_NAME}"
+            # Remove Docker Compose deployment if exists
+            if [[ -d "${DEPLOY_DIR}" ]]; then
+              cd "${DEPLOY_DIR}"
+              if [[ -f docker-compose.yml ]]; then
+                echo "Stopping Docker Compose services..."
+                docker compose down --volumes --remove-orphans || true
+              fi
+              cd ~
+              rm -rf "${DEPLOY_DIR}"
+              echo "✅ Removed deployment directory: ${DEPLOY_DIR}"
             else
-              echo "ℹ️ Container not found: ${CONTAINER_NAME}"
+              echo "ℹ️ Deployment directory not found: ${DEPLOY_DIR}"
             fi
 
             # Remove port assignment tracking
@@ -116,56 +122,72 @@ jobs:
               echo "⚠️  DRY RUN MODE - No actual removals will be performed"
             fi
 
-            # Find staging containers older than MAX_AGE_DAYS
+            # Find staging deployments older than MAX_AGE_DAYS
             CUTOFF_DATE=$(date -d "${MAX_AGE_DAYS} days ago" +%s)
 
-            # List all staging containers with their metadata
-            docker ps -a --filter "label=staging=true" --format "table {{.Names}}\t{{.Label \"deployed\"}}\t{{.Label \"branch\"}}\t{{.Label \"port\"}}" | tail -n +2 | while read -r line; do
-              CONTAINER_NAME=$(echo "$line" | awk '{print $1}')
-              DEPLOYED_DATE=$(echo "$line" | awk '{print $2}')
-              BRANCH=$(echo "$line" | awk '{print $3}')
-              PORT=$(echo "$line" | awk '{print $4}')
-
-              # Skip containers without deployed date
-              if [[ -z "${DEPLOYED_DATE}" || "${DEPLOYED_DATE}" == "<no" ]]; then
-                echo "⚠️  Skipping ${CONTAINER_NAME} - no deployment date"
-                continue
-              fi
-
-              # Skip the main staging environment (develop branch)
-              if [[ "${BRANCH}" == "develop" ]]; then
-                echo "ℹ️  Keeping main staging: ${CONTAINER_NAME}"
-                continue
-              fi
-
-              # Convert deployed date to timestamp
-              if command -v date >/dev/null 2>&1; then
-                DEPLOYED_TIMESTAMP=$(date -d "${DEPLOYED_DATE}" +%s 2>/dev/null || echo "0")
-              else
-                DEPLOYED_TIMESTAMP=0
-              fi
-
-              # Check if container is old enough to remove
-              if [[ ${DEPLOYED_TIMESTAMP} -lt ${CUTOFF_DATE} ]]; then
-                echo "🗑️  Found old container: ${CONTAINER_NAME} (branch: ${BRANCH}, deployed: ${DEPLOYED_DATE})"
-
-                if [[ "${DRY_RUN}" != "true" ]]; then
-                  docker stop ${CONTAINER_NAME} || true
-                  docker rm ${CONTAINER_NAME} || true
-
-                  # Remove port tracking file
-                  if [[ -n "${PORT}" ]]; then
-                    rm -f ~/staging-ports/port-${PORT}.txt
-                  fi
-
-                  echo "✅ Removed: ${CONTAINER_NAME}"
-                else
-                  echo "  [DRY RUN] Would remove: ${CONTAINER_NAME}"
+            # Check staging deployment directories
+            if [[ -d "$HOME/staging-deployments" ]]; then
+              for DEPLOY_DIR in $HOME/staging-deployments/*/; do
+                if [[ ! -d "${DEPLOY_DIR}" ]]; then
+                  continue
                 fi
-              else
-                echo "✅ Keeping recent: ${CONTAINER_NAME} (deployed: ${DEPLOYED_DATE})"
-              fi
-            done
+
+                CONTAINER_NAME=$(basename "${DEPLOY_DIR}")
+
+                # Skip if no .env file
+                if [[ ! -f "${DEPLOY_DIR}.env" ]]; then
+                  echo "⚠️  Skipping ${CONTAINER_NAME} - no .env file"
+                  continue
+                fi
+
+                # Extract deployment info from .env file
+                BRANCH_NAME=$(grep "^BRANCH_NAME=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+                DEPLOYED_AT=$(grep "^DEPLOYED_AT=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+                PORT=$(grep "^PORT=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+
+                # Skip if no deployment date
+                if [[ -z "${DEPLOYED_AT}" ]]; then
+                  echo "⚠️  Skipping ${CONTAINER_NAME} - no deployment date"
+                  continue
+                fi
+
+                # Skip the main staging environment (develop branch)
+                if [[ "${BRANCH_NAME}" == "develop" ]]; then
+                  echo "ℹ️  Keeping main staging: ${CONTAINER_NAME}"
+                  continue
+                fi
+
+                # Convert deployed date to timestamp
+                DEPLOYED_TIMESTAMP=$(date -d "${DEPLOYED_AT}" +%s 2>/dev/null || echo "0")
+
+                # Check if deployment is old enough to remove
+                if [[ ${DEPLOYED_TIMESTAMP} -lt ${CUTOFF_DATE} && ${DEPLOYED_TIMESTAMP} -gt 0 ]]; then
+                  echo "🗑️  Found old deployment: ${CONTAINER_NAME} (branch: ${BRANCH_NAME}, deployed: ${DEPLOYED_AT})"
+
+                  if [[ "${DRY_RUN}" != "true" ]]; then
+                    cd "${DEPLOY_DIR}"
+                    if [[ -f docker-compose.yml ]]; then
+                      docker compose down --volumes --remove-orphans || true
+                    fi
+                    cd ~
+                    rm -rf "${DEPLOY_DIR}"
+
+                    # Remove port tracking file
+                    if [[ -n "${PORT}" ]]; then
+                      rm -f ~/staging-ports/port-${PORT}.txt
+                    fi
+
+                    echo "✅ Removed: ${CONTAINER_NAME}"
+                  else
+                    echo "  [DRY RUN] Would remove: ${CONTAINER_NAME}"
+                  fi
+                else
+                  echo "✅ Keeping recent: ${CONTAINER_NAME} (deployed: ${DEPLOYED_AT})"
+                fi
+              done
+            else
+              echo "ℹ️  No staging deployments directory found"
+            fi
 
             # Clean up unused staging images
             echo ""
@@ -181,14 +203,38 @@ jobs:
                   fi
                 done
 
-              # General cleanup
-              docker system prune -f --filter "until=${MAX_AGE_DAYS}d"
+              # General cleanup (use hours instead of days for the filter)
+              HOURS=$((MAX_AGE_DAYS * 24))
+              docker system prune -af --filter "until=${HOURS}h" || true
               echo "✅ Image cleanup complete"
             else
               echo "[DRY RUN] Would clean up unused images"
             fi
 
-            # Show current staging status
+            # Show current staging deployments
             echo ""
-            echo "📊 Current Staging Environments:"
-            docker ps --filter "label=staging=true" --format "table {{.Names}}\t{{.Ports}}\t{{.Label \"branch\"}}\t{{.Status}}"
+            echo "📊 Current Staging Deployments:"
+            if [[ -d "$HOME/staging-deployments" ]]; then
+              for DEPLOY_DIR in $HOME/staging-deployments/*/; do
+                if [[ -d "${DEPLOY_DIR}" && -f "${DEPLOY_DIR}.env" ]]; then
+                  CONTAINER_NAME=$(basename "${DEPLOY_DIR}")
+                  BRANCH_NAME=$(grep "^BRANCH_NAME=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+                  PORT=$(grep "^PORT=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+                  DEPLOYED_AT=$(grep "^DEPLOYED_AT=" "${DEPLOY_DIR}.env" 2>/dev/null | cut -d'=' -f2)
+
+                  cd "${DEPLOY_DIR}"
+                  STATUS="Not running"
+                  if docker compose ps 2>/dev/null | grep -q "${CONTAINER_NAME}"; then
+                    if docker compose ps 2>/dev/null | grep -q "healthy"; then
+                      STATUS="✅ Healthy"
+                    else
+                      STATUS="⚠️  Running"
+                    fi
+                  fi
+
+                  echo "  - ${CONTAINER_NAME} (${BRANCH_NAME}) on port ${PORT} - ${STATUS} - Deployed: ${DEPLOYED_AT}"
+                fi
+              done
+            else
+              echo "  No staging deployments found"
+            fi
