@@ -77,7 +77,7 @@ list_staging() {
                 DEPLOY_NAME=$(basename "$dir")
                 echo -e "\n${YELLOW}${DEPLOY_NAME}:${NC}"
                 cd "$dir"
-                docker-compose ps 2>/dev/null || echo "  Not running"
+                docker compose ps 2>/dev/null || echo "  Not running"
             fi
         done
     else
@@ -88,7 +88,7 @@ list_staging() {
     echo -e "${GREEN}Production:${NC}"
     if [[ -f "$HOME/production/docker-compose.yml" ]]; then
         cd $HOME/production
-        docker-compose ps 2>/dev/null || echo "Not running"
+        docker compose ps 2>/dev/null || echo "Not running"
     else
         echo "Not deployed"
     fi
@@ -109,12 +109,12 @@ status_staging() {
 
     if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
         cd "${deploy_dir}"
-        docker-compose ps
+        docker compose ps
 
         # Check health status
-        if docker-compose ps | grep -q "healthy"; then
+        if docker compose ps | grep -q "healthy"; then
             echo -e "\n${GREEN}🏥 Healthy${NC}"
-        elif docker-compose ps | grep -q "starting"; then
+        elif docker compose ps | grep -q "starting"; then
             echo -e "\n${YELLOW}⚠️  Starting up...${NC}"
         else
             echo -e "\n${YELLOW}⚠️  Not healthy${NC}"
@@ -133,7 +133,7 @@ show_logs() {
     if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
         cd "${deploy_dir}"
         echo -e "${BLUE}📜 Logs for ${container_name}:${NC}"
-        docker-compose logs --tail 50 -f
+        docker compose logs --tail 50 -f
     else
         echo -e "${RED}Deployment not found${NC}"
     fi
@@ -148,7 +148,7 @@ stop_staging() {
     if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
         cd "${deploy_dir}"
         echo -e "${YELLOW}⏹️  Stopping ${container_name}...${NC}"
-        docker-compose stop && echo -e "${GREEN}✅ Stopped${NC}" || echo -e "${RED}❌ Failed to stop${NC}"
+        docker compose stop && echo -e "${GREEN}✅ Stopped${NC}" || echo -e "${RED}❌ Failed to stop${NC}"
     else
         echo -e "${RED}Deployment not found${NC}"
     fi
@@ -163,7 +163,7 @@ start_staging() {
     if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
         cd "${deploy_dir}"
         echo -e "${GREEN}▶️  Starting ${container_name}...${NC}"
-        docker-compose start && echo -e "${GREEN}✅ Started${NC}" || echo -e "${RED}❌ Failed to start${NC}"
+        docker compose start && echo -e "${GREEN}✅ Started${NC}" || echo -e "${RED}❌ Failed to start${NC}"
     else
         echo -e "${RED}Deployment not found${NC}"
     fi
@@ -180,7 +180,7 @@ remove_staging() {
     if [[ -d "${deploy_dir}" && -f "${deploy_dir}/docker-compose.yml" ]]; then
         cd "${deploy_dir}"
         # Stop and remove containers and volumes
-        docker-compose down --volumes
+        docker compose down --volumes
         echo -e "${GREEN}✅ Removed containers and volumes${NC}"
 
         # Remove deployment directory

@@ -59,12 +59,17 @@ jobs:
         key: ${{ secrets.DEPLOY_KEY }}
         port: ${{ secrets.DEPLOY_PORT }}
         script: |
-          # Ensure docker-compose is installed
-          if ! command -v docker-compose &> /dev/null; then
-            echo "Installing docker-compose..."
-            sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
+          # Install Docker Compose v2 if not already installed
+          if ! docker compose version &> /dev/null; then
+            echo "Installing Docker Compose v2..."
+            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+            mkdir -p $DOCKER_CONFIG/cli-plugins
+            curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+            chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
           fi
+
+          # Show Docker Compose version for debugging
+          docker compose version
 
           # Create production directory
           mkdir -p ~/production
@@ -83,19 +88,19 @@ jobs:
           EOF
 
           # Stop and start services with new image
-          docker-compose pull app
-          docker-compose up -d
+          docker compose pull app
+          docker compose up -d
 
           # Wait for health check
           echo "⏳ Waiting for services to be healthy..."
           for i in {1..30}; do
-            if docker-compose ps | grep -q "healthy"; then
+            if docker compose ps | grep -q "healthy"; then
               echo "✅ Production deployment successful!"
               break
             fi
             if [ $i -eq 30 ]; then
               echo "❌ Services failed to become healthy"
-              docker-compose logs app
+              docker compose logs app
               exit 1
             fi
             sleep 2
