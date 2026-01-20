@@ -71,6 +71,10 @@ jobs:
           # Show Docker Compose version for debugging
           docker compose version
 
+          # Stop and remove old standalone container if it exists (from before Docker Compose)
+          docker stop php-app 2>/dev/null || true
+          docker rm php-app 2>/dev/null || true
+
           # Create production directory
           mkdir -p ~/production
           cd ~/production
@@ -87,8 +91,13 @@ jobs:
           MYSQL_ROOT_PASSWORD=${{ secrets.PROD_MYSQL_ROOT_PASSWORD }}
           EOF
 
-          # Stop and start services with new image
-          docker compose pull app
+          # Stop existing compose deployment if it exists
+          docker compose down 2>/dev/null || true
+
+          # Pull latest images (php-app is the service name in docker-compose.prod.yml)
+          docker compose pull
+
+          # Start services
           docker compose up -d
 
           # Wait for health check
@@ -100,7 +109,7 @@ jobs:
             fi
             if [ $i -eq 30 ]; then
               echo "❌ Services failed to become healthy"
-              docker compose logs app
+              docker compose logs php-app
               exit 1
             fi
             sleep 2

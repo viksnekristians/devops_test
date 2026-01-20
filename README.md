@@ -15,8 +15,9 @@ This project is a basic "Hello World" PHP web application built to explore and i
 
 - **Language**: PHP 8.2
 - **Web Server**: Apache
+- **Database**: MySQL 8.0
 - **Testing**: PHPUnit 9.5
-- **Containerization**: Docker
+- **Containerization**: Docker & Docker Compose
 - **CI/CD**: GitHub Actions
 - **Registry**: GitHub Container Registry (ghcr.io)
 - **Deployment**: Google Cloud VM
@@ -37,18 +38,51 @@ git clone https://github.com/viksnekristians/devops_test.git
 cd devops_test
 ```
 
-2. Using Docker:
+2. Using Docker Compose (recommended - includes MySQL):
+```bash
+# Start the application with MySQL database
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop the application
+docker compose down
+```
+Access the application at `http://localhost:8080`
+
+3. Using Docker (standalone - no database):
 ```bash
 docker build -t php-hello-world .
 docker run -p 8080:80 php-hello-world
 ```
-Access the application at `http://localhost:8080`
 
-3. Without Docker:
+4. Without Docker:
 ```bash
 composer install
 php -S localhost:8080
 ```
+
+### Database Configuration
+
+The application includes MySQL 8.0 integration with the following setup:
+
+**Local Development** (`docker-compose.yml`):
+- Database: `myapp`
+- User: `appuser`
+- Password: `apppassword` (configure in `.env` file)
+- Port: 3306 (exposed locally)
+
+**Environment Variables**:
+```bash
+DB_HOST=db              # MySQL container name
+DB_PORT=3306
+DB_NAME=myapp
+DB_USER=appuser
+DB_PASSWORD=apppassword
+```
+
+The database is automatically initialized with tables from `docker/mysql/init/01-init.sql`.
 
 ### Running Tests
 
@@ -134,11 +168,23 @@ Images are stored in GitHub Container Registry:
 
 ## Production Environment
 
-The application runs on Google Cloud with:
-- Docker container with health checks
-- Auto-restart on failure
-- Port 8080 exposed
-- Automatic cleanup of old images
+The application runs on Google Cloud with Docker Compose:
+
+### Architecture:
+- **PHP Application**: Container with Apache and PHP extensions
+- **MySQL Database**: Persistent storage with named volumes
+- **Network Isolation**: Dedicated Docker network
+- **Health Checks**: Both app and database containers
+- **Auto-restart**: Containers restart on failure
+
+### Production Configuration:
+- Application port: 8080
+- Database: MySQL 8.0 with persistent volumes
+- Secrets managed via GitHub Secrets:
+  - `PROD_DB_PASSWORD`: Database password
+  - `PROD_MYSQL_ROOT_PASSWORD`: MySQL root password
+  - `PROD_DB_NAME`: Database name (default: production_db)
+  - `PROD_DB_USER`: Database user (default: prod_user)
 
 ## Learning Outcomes
 
@@ -166,17 +212,25 @@ The project now includes a comprehensive staging environment system that allows 
 - Push to `feature/*` → Deploys to dynamic port `http://YOUR-IP:90XX`
 - Pull requests → Automatic preview environment with URL in PR comment
 
+Each staging deployment includes:
+- **Isolated MySQL database** with unique credentials per deployment
+- **Dedicated Docker network** for container isolation
+- **Persistent volumes** for database data
+- **Health monitoring** for both app and database
+
 #### Staging Workflows:
 
 1. **Deploy to Staging** (`staging-deploy.yml`)
    - Triggered on push to develop or feature branches
-   - Creates isolated Docker containers
+   - Creates isolated Docker Compose deployments
+   - Each deployment gets its own MySQL database
    - Assigns consistent ports based on branch names
    - Comments on PRs with staging URLs
 
 2. **Cleanup Staging** (`staging-cleanup.yml`)
    - Runs daily at 2 AM UTC
    - Removes staging environments older than 7 days
+   - Cleans up databases and volumes automatically
    - Automatically cleans up when PRs are closed
    - Manual trigger available for immediate cleanup
 
@@ -246,10 +300,11 @@ The exact URL will be displayed in:
 ## Future Enhancements
 
 - [x] Add staging environment
+- [x] Database integration with MySQL
+- [x] Docker Compose for multi-container orchestration
 - [ ] Implement blue-green deployment
 - [ ] Add monitoring and logging (Prometheus/Grafana)
 - [ ] Kubernetes deployment option
-- [ ] Database integration example
 - [ ] Load balancing setup
 - [ ] SSL/TLS configuration
 - [ ] Add custom domain support for staging
