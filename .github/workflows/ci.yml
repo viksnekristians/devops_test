@@ -103,6 +103,54 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
+    - name: Extract metadata for MySQL
+      id: meta-mysql
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mysql
+        tags: |
+          type=ref,event=branch
+          type=ref,event=tag
+          type=semver,pattern={{version}}
+          type=sha,format=long
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push MySQL Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ./Dockerfile.mysql
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta-mysql.outputs.tags }}
+        labels: ${{ steps.meta-mysql.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Extract metadata for MySQL Replica
+      id: meta-mysql-replica
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mysql-replica
+        tags: |
+          type=ref,event=branch
+          type=ref,event=tag
+          type=semver,pattern={{version}}
+          type=sha,format=long
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push MySQL Replica Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ./Dockerfile.mysql-replica
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta-mysql-replica.outputs.tags }}
+        labels: ${{ steps.meta-mysql-replica.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
   security-scan:
     runs-on: ubuntu-latest
     needs: test
