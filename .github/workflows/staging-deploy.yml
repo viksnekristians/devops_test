@@ -241,6 +241,7 @@ jobs:
             # Create .env file with deployment-specific variables
             cat > .env <<EOF
             IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_TAG}
+            MYSQL_IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mysql:latest
             CONTAINER_NAME=${CONTAINER_NAME}
             PORT=${PORT}
             BRANCH_NAME=${{ needs.assign-port.outputs.branch_name }}
