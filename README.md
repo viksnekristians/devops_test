@@ -140,10 +140,15 @@ vendor/bin/phpunit tests
 
 Configure these in GitHub repository settings:
 
+#### Deployment Secrets
 - `DEPLOY_HOST`: Google Cloud VM IP address
 - `DEPLOY_USER`: SSH username for deployment
 - `DEPLOY_KEY`: Private SSH key for authentication
 - `DEPLOY_PORT`: SSH port (default: 22)
+
+#### Docker Registry Secrets (if using Docker Hub)
+- `DOCKER_USERNAME`: Docker Hub username for registry authentication
+- `DOCKER_TOKEN`: Docker Hub access token for pushing images
 
 ### Manual Deployment
 
