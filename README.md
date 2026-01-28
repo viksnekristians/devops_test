@@ -304,14 +304,8 @@ The exact URL will be displayed in:
 
 ## Future Enhancements
 
-- [x] Add staging environment
-- [x] Database integration with MySQL
-- [x] Docker Compose for multi-container orchestration
-- [ ] Implement blue-green deployment
-- [ ] Add monitoring and logging (Prometheus/Grafana)
+- [ ] Add read DB replica
 - [ ] Kubernetes deployment option
-- [ ] Load balancing setup
-- [ ] SSL/TLS configuration
 - [ ] Add custom domain support for staging
 
 ## Contributing
