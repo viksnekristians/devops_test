@@ -3,7 +3,7 @@ services:
     build: .
     container_name: php-hello-world
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - .:/var/www/html
     environment:
@@ -30,7 +30,7 @@ services:
       - MYSQL_USER=${DB_USER:-appuser}
       - MYSQL_PASSWORD=${DB_PASSWORD:-apppassword}
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - db-data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d

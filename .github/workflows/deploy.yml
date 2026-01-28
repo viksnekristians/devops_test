@@ -85,10 +85,13 @@ jobs:
           # Create .env file with production variables
           cat > .env <<EOF
           IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.set-tag.outputs.tag }}
+          MYSQL_IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mysql:${{ steps.set-tag.outputs.tag }}
+          MYSQL_REPLICA_IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mysql-replica:${{ steps.set-tag.outputs.tag }}
           DB_NAME=${{ secrets.PROD_DB_NAME || 'production_db' }}
           DB_USER=${{ secrets.PROD_DB_USER || 'prod_user' }}
           DB_PASSWORD=${{ secrets.PROD_DB_PASSWORD }}
           MYSQL_ROOT_PASSWORD=${{ secrets.PROD_MYSQL_ROOT_PASSWORD }}
+          REPLICATION_PASSWORD=${{ secrets.PROD_REPLICATION_PASSWORD }}
           EOF
 
           # Stop existing compose deployment if it exists

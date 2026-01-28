@@ -1,0 +1,13 @@
+[mysqld]
+server-id=1
+log-bin=mysql-bin
+binlog-format=ROW
+binlog-do-db=production_db
+binlog-ignore-db=mysql
+binlog-ignore-db=information_schema
+binlog-ignore-db=performance_schema
+binlog-ignore-db=sys
+expire_logs_days=7
+max_binlog_size=100M
+sync_binlog=1
+innodb_flush_log_at_trx_commit=1

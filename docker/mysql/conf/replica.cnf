@@ -1,0 +1,11 @@
+[mysqld]
+server-id=2
+relay-log=mysql-relay-bin
+log-bin=mysql-bin
+binlog-format=ROW
+read_only=1
+super_read_only=1
+log_slave_updates=1
+relay_log_recovery=1
+relay_log_info_repository=TABLE
+master_info_repository=TABLE

@@ -1,0 +1,8 @@
+FROM mysql:8.0
+
+# Copy init scripts into the image
+COPY docker/mysql/init/ /docker-entrypoint-initdb.d/
+COPY docker/mysql/conf/master.cnf /etc/mysql/conf.d/master.cnf
+
+# Make sure scripts are executable
+RUN chmod +x /docker-entrypoint-initdb.d/*.sql 2>/dev/null || true

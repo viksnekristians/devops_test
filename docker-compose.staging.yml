@@ -7,6 +7,7 @@ services:
     environment:
       - APACHE_DOCUMENT_ROOT=/var/www/html
       - DB_HOST=${CONTAINER_NAME}-db
+      - DB_READ_HOST=${CONTAINER_NAME}-db
       - DB_NAME=staging_db
       - DB_USER=staging_user
       - DB_PASSWORD=${DB_PASSWORD}
@@ -33,7 +34,7 @@ services:
       - "deployed=${DEPLOYED_AT}"
 
   db:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE_TAG:-mysql:8.0}
     container_name: ${CONTAINER_NAME}-db
     restart: unless-stopped
     environment:
