@@ -7,6 +7,7 @@ services:
     environment:
       - APACHE_DOCUMENT_ROOT=/var/www/html
       - DB_HOST=prod-db
+      - DB_READ_HOST=prod-db-replica
       - DB_NAME=${DB_NAME:-production_db}
       - DB_USER=${DB_USER:-prod_user}
       - DB_PASSWORD=${DB_PASSWORD}
@@ -15,6 +16,8 @@ services:
       - APP_DEBUG=false
     depends_on:
       db:
+        condition: service_healthy
+      db-replica:
         condition: service_healthy
     networks:
       - prod-network
@@ -26,7 +29,7 @@ services:
       retries: 3
 
   db:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE_TAG:-ghcr.io/viksnekristians/devops_test-mysql:latest}
     container_name: prod-db
     restart: unless-stopped
     environment:
@@ -34,9 +37,9 @@ services:
       - MYSQL_DATABASE=${DB_NAME:-production_db}
       - MYSQL_USER=${DB_USER:-prod_user}
       - MYSQL_PASSWORD=${DB_PASSWORD}
+      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD:-repl_password_2024}
     volumes:
       - prod-db-data:/var/lib/mysql
-      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
@@ -46,10 +49,36 @@ services:
     networks:
       - prod-network
 
+  db-replica:
+    image: ${MYSQL_REPLICA_IMAGE_TAG:-ghcr.io/viksnekristians/devops_test-mysql-replica:latest}
+    container_name: prod-db-replica
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME:-production_db}
+      - MYSQL_USER=${DB_USER:-prod_user}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD:-repl_password_2024}
+    volumes:
+      - prod-db-replica-data:/var/lib/mysql
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - prod-network
+
 networks:
   prod-network:
     driver: bridge
 
 volumes:
   prod-db-data:
+    driver: local
+  prod-db-replica-data:
     driver: local
